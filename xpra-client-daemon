@@ -1,0 +1,192 @@
+#!/bin/bash
+# vim: sw=2 ts=2 expandtab
+#
+# script: xpra-client-daemon
+# url: https://github.com/muroc/xpra-client-daemon
+# author: Maciej Chałapuk
+# license: MIT
+
+CONFIG_DIR="$HOME/.xpra/client-daemon"
+mkdir -p $CONFIG_DIR || exit 1
+
+get_worker_status_file() {
+  echo "$CONFIG_DIR/${1}/worker.status"
+}
+get_worker_pid_file() {
+  echo "$CONFIG_DIR/${1}/worker.pid"
+}
+get_client_pid_file() {
+  echo "$CONFIG_DIR/${1}/client.pid"
+}
+get_client_log_file() {
+  echo "${CONFIG_DIR}/${1}/client.log"
+}
+
+STATUS_RUNNING="RUNNING"
+STATUS_STOPPED="STOPPED"
+
+mark_running() {
+  echo $STATUS_RUNNING > `get_worker_status_file $1`
+}
+mark_stopped() {
+  echo $STATUS_STOPPED > `get_worker_status_file $1`
+}
+
+get_mark() {
+  STATUS_FILE=`get_worker_status_file $1`
+  if [ -f $STATUS_FILE ]
+  then
+    cat $STATUS_FILE
+  else
+    echo "STOPPED"
+  fi
+}
+is_marked_running() {
+  test $STATUS_RUNNING = `get_mark $1`
+}
+
+read_worker_pid() {
+  PID_FILE=`get_worker_pid_file $1`
+  touch $PID_FILE
+  cat $PID_FILE
+}
+write_worker_pid() {
+  echo "$2" >"`get_worker_pid_file $1`"
+}
+remove_worker_pid_file() {
+  rm -f "`get_worker_pid_file $1`"
+}
+
+read_client_pid() {
+  PID_FILE=`get_client_pid_file $1`
+  touch $PID_FILE
+  cat $PID_FILE
+}
+write_client_pid() {
+  echo "$2" >"`get_client_pid_file $1`"
+}
+remove_client_pid_file() {
+  rm -f "`get_client_pid_file $1`"
+}
+
+get_cmd_from_pid() {
+  ps h -o cmd -p $1
+}
+is_pid_running() {
+  test -n "`get_cmd_from_pid $1`"
+}
+
+is_client_cmd() {
+  test -n "`echo $2 | egrep "xpra attach.*$1"`"
+}
+is_worker_cmd() {
+  test -n "`echo $2 | grep "xpra-client-daemon"`"
+}
+
+is_client_running() {
+  PID="`read_client_pid $1`"
+  test -n "$PID" && is_pid_running $PID \
+    && is_client_cmd "$1" "`get_cmd_from_pid $PID`"
+}
+is_worker_running() {
+  PID="`read_worker_pid $1`"
+  test -n "$PID" && is_pid_running $PID \
+    && is_worker_cmd "$1" "`get_cmd_from_pid $PID`"
+}
+
+worker() {
+  while true
+  do
+    while is_client_running $1
+    do
+      sleep 1
+    done
+
+    if ! is_marked_running $1
+    then
+      remove_client_pid_file $1
+      break
+    fi
+
+    xpra-client $1 >`get_client_log_file $1` 2>&1 &
+    write_client_pid $1 $!
+    sleep 1
+  done
+}
+kill_client() {
+  PID="`read_client_pid $1`"
+  test -n "$PID" && test -n "`ps h -p $PID`" && kill $PID
+}
+
+start_worker() {
+  mark_running $1
+  worker $1 &
+  write_worker_pid $1 $!
+}
+stop_worker() {
+  mark_stopped $1
+  kill_client $1
+  remove_worker_pid_file $1
+}
+
+get_worker_pid_status() {
+  ( is_worker_running $1 && echo "RUNNING" ) || echo "STOPPED"
+}
+
+ACTIVE="`find $CONFIG_DIR -mindepth 1 -maxdepth 1 -type d | sed -e 's/^.*\///'`"
+
+do_start() {
+  for CONTAINER in $ACTIVE
+  do
+    echo -n "$CONTAINER: "
+    if is_worker_running $CONTAINER
+    then
+      echo "already RUNNING"
+      continue
+    fi
+    start_worker $CONTAINER
+    get_worker_pid_status $CONTAINER
+  done
+}
+do_stop() {
+  for CONTAINER in $ACTIVE
+  do
+    echo -n "$CONTAINER: "
+    if ! is_worker_running $CONTAINER
+    then
+      echo "already STOPPED"
+      continue
+    fi
+    stop_worker $CONTAINER
+    get_worker_pid_status $CONTAINER
+  done
+}
+do_status() {
+  for CONTAINER in $ACTIVE
+  do
+    echo "$CONTAINER: `get_worker_pid_status $CONTAINER`"
+  done
+}
+do_details() {
+  for CONTAINER in $ACTIVE
+  do
+    if ! is_worker_running $CONTAINER
+    then
+      echo "$CONTAINER: STOPPED"
+      continue
+    fi
+    WPID="`read_worker_pid $CONTAINER`"
+    CPID="`read_client_pid $CONTAINER`"
+    echo "$CONTAINER: RUNNING worker=$WPID client=$CPID"
+  done
+}
+
+case "$1" in
+start) do_start ;;
+stop) do_stop ;;
+restart) do_stop; sleep 1; do_start ;;
+status) do_status ;;
+details) do_details ;;
+*) echo "usage: xpra-client-daemon <start|stop|restart|status>" >&2 ;;
+esac
+
