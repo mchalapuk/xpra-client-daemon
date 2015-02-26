@@ -1,0 +1,25 @@
+#!/bin/bash
+# vim: sw=2 ts=2 expandtab
+#
+# script: xpra-client
+# url: https://github.com/muroc/xpra-client-daemon
+# author: Maciej Chałapuk
+# license: MIT
+C="$1"
+
+# configuration start
+OPTS="--microphone --speaker --speaker-codec=mp3 --mmap"
+TTY="100"
+SHARED_DIR="/shared/$C/xpra"
+TCP_PORT="8080"
+XPRA_ADDR="tcp:$C:$TCP_PORT"
+# configuration end
+
+die() { echo "$@" >&2; exit 1; }
+usage() { echo "usage: xpra-client <xpra-server-name>" >&2; die $@; }
+
+test -n "$C" || usage "server name not specified"
+nc -w 1 -z $C $TCP_PORT || usage "xpra server not listening at $XPRA_ADDR"
+
+TMPDIR="$SHARED_DIR" exec xpra attach $XPRA_ADDR $OPTS
+
