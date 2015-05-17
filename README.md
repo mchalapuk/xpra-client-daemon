@@ -54,7 +54,7 @@ xpra-client browser # connects to xpra server at tcp:browser:8080
 
 ## Contribution
 
-Push requests are very welcome.
+Pull requests are very welcome.
 
 ### TODO
 
